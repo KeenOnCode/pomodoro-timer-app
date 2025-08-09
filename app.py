@@ -142,6 +142,14 @@ class PomodoroApp:
 
     def __init__(self, root: tk.Tk):
         self.root = root
+        # Set app icon for window & taskbar
+        try:
+            self.root.iconbitmap(resource_path("assets/app.ico"))  # ưu tiên .ico trên Windows
+        except Exception:
+            # fallback cho nền tảng khác hoặc khi .ico không chạy được
+            self._app_icon = tk.PhotoImage(file=resource_path("assets/app.png"))
+            self.root.iconphoto(False, self._app_icon)
+
         self.root.title(APP_NAME)
         self.root.geometry("680x460")
         self.root.minsize(600, 420)
@@ -221,6 +229,38 @@ class PomodoroApp:
         self.stats_tab = ttk.Frame(self.nb)
         self.nb.add(self.timer_tab, text="Timer")
         self.nb.add(self.stats_tab, text="Stats")
+                # ==== ẢNH NỀN CHO TAB STATS ====
+        bg_file_stats = resource_path("assets/bg.jpg")  # có thể đổi ảnh khác cho Stats nếu muốn
+        try:
+            self._bg_stats_src = Image.open(bg_file_stats)
+        except Exception as e:
+            self._bg_stats_src = None
+            print("Không load được ảnh nền Stats:", e)
+
+        self._bg_stats_label = tk.Label(self.stats_tab, bd=0, highlightthickness=0)
+        self._bg_stats_label.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        def _img_cover_stats(img, target_size):
+            tw, th = target_size
+            iw, ih = img.size
+            scale = max(tw / iw, th / ih)
+            nw, nh = int(iw * scale), int(ih * scale)
+            resized = img.resize((nw, nh), Image.LANCZOS)
+            left = max((nw - tw) // 2, 0)
+            top = max((nh - th) // 2, 0)
+            return resized.crop((left, top, left + tw, top + th))
+
+        def _redraw_bg_stats(event=None):
+            if not self._bg_stats_src:
+                return
+            w, h = self.stats_tab.winfo_width(), self.stats_tab.winfo_height()
+            if w < 2 or h < 2:
+                return
+            img = _img_cover_stats(self._bg_stats_src, (w, h))
+            self._bg_stats_photo = ImageTk.PhotoImage(img)
+            self._bg_stats_label.config(image=self._bg_stats_photo)
+
+        self.stats_tab.bind("<Configure>", _redraw_bg_stats)
 
         # ==== ẢNH NỀN CHO TAB TIMER ====
         bg_file = resource_path("assets/bg.jpg")  # đổi theo tên ảnh của cậu
@@ -319,7 +359,12 @@ class PomodoroApp:
         ttk.Button(pl_frame, text="Save", command=self._save_playlist_setting).grid(row=0, column=3, padx=6, pady=6)
 
         # --- Stats tab layout ---
-        stats_outer = ttk.Frame(self.stats_tab, padding=8)
+        self.stats_content = ttk.Frame(self.stats_tab, padding=8)
+        self.stats_content.place(relx=0.5, rely=0.5, anchor="center")
+        self.stats_content.tkraise()
+
+        stats_outer = ttk.Frame(self.stats_content, padding=8)
+
         stats_outer.pack(fill="both", expand=True)
 
         top_row = ttk.Frame(stats_outer)
