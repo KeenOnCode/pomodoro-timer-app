@@ -14,6 +14,13 @@ matplotlib.use("Agg")  # draw offscreen; we'll embed via FigureCanvasTkAgg
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import numpy as np
+import threading
+import random
+try:
+    import pygame
+except Exception:
+    pygame = None
+# --- Resource path helper ---
 def resource_path(rel_path: str) -> str:
     # Giúp lấy đúng đường dẫn asset khi chạy .py hoặc .exe (PyInstaller)
     try:
@@ -53,8 +60,86 @@ def notify(title: str, message: str):
     except Exception:
         pass
 
+class MusicPlayer:
+    def __init__(self, folder: str, shuffle: bool = True, volume: float = 0.6):
+        self.folder = folder
+        self.shuffle = shuffle
+        self.volume = max(0.0, min(1.0, float(volume)))
+        self._stop = threading.Event()
+        self._thread = None
+        self._playlist = []
+        self._i = 0
+        try:
+            if pygame is None:
+                raise RuntimeError("pygame not available")
+            pygame.mixer.init()
+            pygame.mixer.music.set_volume(self.volume)
+            self.available = True
+        except Exception as e:
+            print("[Music] Disabled:", e)
+            self.available = False
+
+    def _load_playlist(self):
+        if not os.path.isdir(self.folder):
+            self._playlist = []
+            return
+        files = [os.path.join(self.folder, f) for f in os.listdir(self.folder) if f.lower().endswith(".mp3")]
+        files.sort()
+        if self.shuffle:
+            random.shuffle(files)
+        self._playlist = files
+
+    def _loop(self):
+        import time
+        self._load_playlist()
+        if not self._playlist:
+            print(f"[Music] No .mp3 found in '{self.folder}'.")
+            return
+        self._i = 0
+        while not self._stop.is_set():
+            track = self._playlist[self._i]
+            try:
+                pygame.mixer.music.load(track)
+                pygame.mixer.music.play()
+                print("[Music] Playing:", os.path.basename(track))
+            except Exception as e:
+                print("[Music] Play error:", e)
+            while not self._stop.is_set() and pygame.mixer.music.get_busy():
+                time.sleep(0.2)
+            self._i += 1
+            if self._i >= len(self._playlist):
+                if self.shuffle:
+                    random.shuffle(self._playlist)
+                self._i = 0
+
+    def start(self):
+        if not getattr(self, "available", False):
+            return
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        if not getattr(self, "available", False):
+            return
+        self._stop.set()
+        try:
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
 
 class PomodoroApp:
+    def _toggle_music(self):
+        try:
+            if self.music_enabled.get():
+                self.music.start()
+            else:
+                self.music.stop()
+        except Exception as e:
+            print("[Music] toggle error:", e)
+
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(APP_NAME)
@@ -77,6 +162,17 @@ class PomodoroApp:
         # Data & settings
         self.data = self._load_data()
         self.playlist_var = tk.StringVar(value=self.data.get("settings", {}).get("playlist_url", ""))
+        # --- Music (optional) ---
+        self.music_enabled = tk.BooleanVar(value=True)
+        try:
+            # Nếu đã có class MusicPlayer (bước 2), đoạn dưới sẽ chạy
+            music_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "music")
+            self.music = MusicPlayer(folder=music_folder, shuffle=True, volume=0.6)
+            if self.music_enabled.get():
+                self.music.start()
+        except NameError:
+            # Chưa thêm class MusicPlayer thì vẫn tạo biến để UI không lỗi
+            self.music = None
 
         # UI
         self._build_ui()
@@ -207,6 +303,8 @@ class PomodoroApp:
         footer.pack(fill="x", side="bottom", pady=(10, 0))
 
         ttk.Checkbutton(footer, text="Sound", variable=self.sound_enabled).pack(side="left")
+        ttk.Checkbutton(footer, text="Music", variable=self.music_enabled, command=self._toggle_music).pack(side="left", padx=(8,0))
+
         self.counter_label = ttk.Label(footer, text="Focus sessions (runtime): 0")
         self.counter_label.pack(side="right")
 
